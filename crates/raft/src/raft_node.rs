@@ -171,6 +171,7 @@ impl<S: Storage, T: Transport> RaftNode<S, T> { // TODO: representation of peers
     }
 
     pub async fn handle_request_vote(&mut self, req: RequestVoteRequest) -> RequestVoteResponse {
+        let _guard = self.state_lock.write().await; // Lock state for writing
         // Handle request vote requests
         if req.term < self.state.current_term {
             return RequestVoteResponse {
@@ -180,7 +181,12 @@ impl<S: Storage, T: Transport> RaftNode<S, T> { // TODO: representation of peers
         }
 
         if req.term > self.state.current_term {
+            drop(_guard); // Release the lock before mutable borrow
             self.become_follower(req.term).await; // TODO: thread safety
+            return RequestVoteResponse {
+                term: self.state.current_term,
+                vote_granted: false,
+            };
         }
 
         // Check if already voted for someone else
@@ -214,6 +220,7 @@ impl<S: Storage, T: Transport> RaftNode<S, T> { // TODO: representation of peers
 
     async fn become_follower(&mut self, term: u64) {
         let _guard = self.role_lock.write().await; // Lock role for writing
+        let _state_guard = self.state_lock.write().await; // Lock state for writing
         self.role = Role::Follower;
         self.state.current_term = term;
         self.state.voted_for = None;
