@@ -1,3 +1,4 @@
+use crate::log_entry::LogEntry;
 pub struct AppendEntriesRequest {
     pub term: u64,
     pub leader_id: u64,

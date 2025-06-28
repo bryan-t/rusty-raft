@@ -1,35 +1,8 @@
 use async_trait::async_trait;
 use crate::log_entry::LogEntry;
-
+use crate::rpc::{AppendEntriesRequest, AppendEntriesResponse, RequestVoteRequest, RequestVoteResponse};
 #[async_trait]
 pub trait Transport: Send + Sync { // TODO: why does transport know target_id?
     async fn send_append_entries(&self, target_id: u64, req: &AppendEntriesRequest) -> AppendEntriesResponse;
     async fn send_request_vote(&self, target_id: u64, req: &RequestVoteRequest) -> RequestVoteResponse;
-}
-
-pub struct AppendEntriesRequest {
-    pub term: u64,
-    pub leader_id: u64,
-    pub prev_log_index: u64,
-    pub prev_log_term: u64,
-    pub entries: Vec<LogEntry>,
-    pub leader_commit: u64,
-}
-
-pub struct AppendEntriesResponse {
-    pub term: u64,
-    pub success: bool,
-    pub match_index: u64,
-}
-
-pub struct RequestVoteRequest {
-    pub term: u64,
-    pub candidate_id: u64,
-    pub last_log_index: u64,
-    pub last_log_term: u64,
-}
-
-pub struct RequestVoteResponse {
-    pub term: u64,
-    pub vote_granted: bool,
 }
