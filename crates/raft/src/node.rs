@@ -1,3 +1,5 @@
+
+use std::io::Error;
 use std::sync::{Arc, Mutex};
 
 use crate::node;
@@ -16,7 +18,7 @@ use tokio::time::{Duration, Instant};
 pub struct RaftNode<S: Storage + 'static, T: Transport + 'static> {
     core: Arc<Mutex<node::RaftNodeCore<S, T>>>,
     main_loop_handle: Option<std::thread::JoinHandle<()>>, // changed type
-    stop_tx: Option<mpsc::Sender<()>>, // Sender to stop the main loops
+    stop_tx: mpsc::Sender<()>, // Sender to stop the main loops
     stop_rx: Option<mpsc::Receiver<()>>, // Receiver to stop the main loops
     append_entries_tx: mpsc::Sender<(AppendEntriesRequest, oneshot::Sender<AppendEntriesResponse>)>,
     request_vote_tx: mpsc::Sender<(RequestVoteRequest, oneshot::Sender<RequestVoteResponse>)>,
@@ -33,10 +35,11 @@ impl<S: Storage, T: Transport> RaftNode<S, T> {
         let (append_entries_tx, append_entries_rx) = mpsc::channel(64);
         let (request_vote_tx, request_vote_rx) = mpsc::channel(64);
         let (stop_tx, stop_rx) = mpsc::channel(1); // Channel to stop the main loop
+        
         Self {
             core: Arc::new(Mutex::new(node::RaftNodeCore::new(id, peers, storage, transport))),
             main_loop_handle: None,
-            stop_tx: Some(stop_tx), // Store the sender to stop the main loop
+            stop_tx: stop_tx, // Store the sender to stop the main loop
             stop_rx: Some(stop_rx), // Store the receiver to stop the main loop
             append_entries_tx,
             request_vote_tx,
@@ -45,12 +48,21 @@ impl<S: Storage, T: Transport> RaftNode<S, T> {
         }
     }
 
-    pub fn stop(&mut self) {
-        self.stop_tx.take().unwrap().blocking_send(()).unwrap(); // Send a stop signal to the main loop
-        if let Some(handle) = self.main_loop_handle.take() {
-            let _ = handle.join(); // Wait for the main loop thread to finish
-        }
+pub fn stop(&mut self) -> Result<(), Error> {
+    // Send a stop signal to the main loop
+    self.stop_tx
+        .blocking_send(())
+        .map_err(|_| Error::new(std::io::ErrorKind::Other, "Failed to send stop signal"))?;
+
+    // Wait for the main loop thread to finish
+    if let Some(handle) = self.main_loop_handle.take() {
+        handle
+            .join()
+            .map_err(|_| Error::new(std::io::ErrorKind::Other, "Main loop thread panicked"))?;
     }
+
+    Ok(())
+}
     pub fn start(&mut self) {
         // Initialize timers and start the main loop
 
@@ -67,7 +79,7 @@ impl<S: Storage, T: Transport> RaftNode<S, T> {
             // Safety: only one main loop runs, and self is not mutably borrowed elsewhere
             rt.block_on(async move {
                 let mut guard = core.lock().unwrap(); // Lock the core for the main loop
-                guard.run(&mut stop_rx, &mut append_entries_rx, &mut request_vote_rx).await;
+                guard.run(stop_rx, append_entries_rx, request_vote_rx).await;
             });
         }));
     }
@@ -169,13 +181,7 @@ impl<S: Storage, T: Transport> RaftNodeCore<S, T> {
         self.election_timeout = Self::generate_election_timeout();
     }
 
-    fn become_leader(&mut self, vote_term: u64, vote_last_log_index: u64) {
-        if vote_term != self.state.current_term
-            || vote_last_log_index != self.state.last_log_index()
-            || self.role != Role::Candidate
-        {
-            return; // Ignore. It means we are not in the correct state to become leader. Maybe an append entries request was received.
-        }
+    fn become_leader(&mut self) {
         self.role = Role::Leader;
         self.state.voted_for = None; // Clear voted_for when becoming leader
         self.state.commit_index = self.state.last_log_index(); // Commit all entries up to the last log index
@@ -302,12 +308,12 @@ impl<S: Storage, T: Transport> RaftNodeCore<S, T> {
     
     async fn run(
         &mut self,
-        stop_rx: &mut mpsc::Receiver<()>,
-        append_entries_rx: &mut mpsc::Receiver<(
+        mut stop_rx: mpsc::Receiver<()>,
+        mut append_entries_rx: mpsc::Receiver<(
             AppendEntriesRequest,
             oneshot::Sender<AppendEntriesResponse>,
         )>,
-        request_vote_rx: &mut mpsc::Receiver<(
+        mut request_vote_rx: mpsc::Receiver<(
             RequestVoteRequest,
             oneshot::Sender<RequestVoteResponse>,
         )>,
@@ -369,7 +375,7 @@ impl<S: Storage, T: Transport> RaftNodeCore<S, T> {
                                     }
                                 }
                                 if votes > (self.peers.len() as u64 + 1) / 2 {
-                                    self.become_leader(req.last_log_term, req.last_log_index)
+                                    self.become_leader()
                                 } else {
                                     self.become_follower(req.term) // Reset to follower if election fails
                                 }
