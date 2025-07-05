@@ -12,6 +12,6 @@ pub trait Storage: Send + Sync {
     fn get_log(&self, index: u64) -> Result<Option<LogEntry>, Box<dyn Error>>;
     fn get_logs(&self, start: u64, end: u64) -> Result<Vec<LogEntry>, Box<dyn Error>>;
     fn truncate_suffix(&mut self, from_index: u64) -> Result<(), Box<dyn Error>>;
-    fn last_log_index(&self) -> Result<u64, Box<dyn Error>>;
+    fn last_log_entry(&self) -> Result<Option<LogEntry>, Box<dyn Error>>;
     fn term_at(&self, index: u64) -> Result<Option<u64>, Box<dyn Error>>;
 }
